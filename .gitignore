@@ -1,0 +1,16 @@
+node_modules
+.vercel
+.output
+dist
+.tanstack
+.nitro
+.vinxi
+.grok
+screenshots
+artifacts
+.project_id
+.node_modules.lock
+*.log
+.env
+.env.*
+!.env.example
