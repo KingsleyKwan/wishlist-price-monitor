@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Bell, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { EmailAuthForm } from "@/components/email-auth-form";
 import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
 import {
   addItem,
@@ -73,6 +74,8 @@ function SignedOut() {
         心願產品留喺你個帳號。發布之後，伺服器每日會自動格價，低過目標就寫入提醒。
       </p>
       <div className="mt-5 flex flex-col gap-2">
+        <EmailAuthForm />
+        <p className="py-1 text-center text-xs tracking-[0.16em] text-muted uppercase">或者</p>
         {GROK_PROVIDERS.map((provider) => (
           <button
             key={provider.providerId}
