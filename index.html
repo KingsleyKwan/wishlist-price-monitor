@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="manifest.json">
+<title>Wishlist Price Monitor | AI 格價神器</title>
+<style>
+  :root { --bg: #0f0f12; --card: #1a1a1f; --accent: #ff3b5c; --accent2: #00d4aa; --text: #e8e8ec; --muted: #8a8a95; --border: #2a2a32; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang HK", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: linear-gradient(135deg, #1a1a1f, #121218); border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.6rem; background: linear-gradient(90deg, #ff3b5c, #ff8a5c); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 1.5rem; margin-bottom: 1.5rem; }
+  input[type="text"], input[type="number"] { background: #121218; border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem 1rem; color: var(--text); font-size: 1rem; }
+  button { background: var(--accent); color: white; border: none; border-radius: 10px; padding: 0.85rem 1.5rem; font-weight: 600; cursor: pointer; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .wishlist-item { background: #121218; border-radius: 12px; padding: 1rem; margin-bottom: 0.75rem; }
+  .ai-box { background: linear-gradient(135deg, #1a1a1f, #1f1a22); border: 1px solid #3a2a32; border-radius: 12px; padding: 1.25rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Wishlist Price Monitor</h1>
+    <p>自動低價提醒 · 香港格價</p>
+  </div>
+  <button class="secondary" onclick="clearAll()">清空</button>
+</header>
+<div class="container">
+  <div class="card">
+    <h2>加入 Wishlist</h2>
+    <div style="display:flex;gap:0.75rem;">
+      <input type="text" id="productInput" placeholder="產品名稱..." style="flex:1" onkeypress="if(event.key==='Enter') addProduct()">
+      <button onclick="addProduct()">加入</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>你的 Wishlist <span id="count">(0)</span></h2>
+    <div id="wishlist"></div>
+  </div>
+</div>
+<script>
+let wishlist = JSON.parse(localStorage.getItem('wishlist') || '[]');
+if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+function render() {
+  document.getElementById('count').textContent = '(' + wishlist.length + ')';
+  document.getElementById('wishlist').innerHTML = wishlist.map((item,i) => `
+    <div class="wishlist-item">
+      <div style="display:flex;justify-content:space-between;">
+        <strong>${item.name}</strong>
+        <div>
+          <button onclick="alert('Demo check: 請到 Price.com.hk 查詢')">格價</button>
+          <button class="secondary" onclick="remove(${i})">刪除</button>
+        </div>
+      </div>
+      <div style="margin-top:0.5rem;font-size:0.9rem;">低於 HK$ <input type="number" value="${item.target||''}" style="width:100px" onchange="updateTarget(${i},this.value)"> 就提醒</div>
+    </div>
+  `).join('') || '<p style="color:#8a8a95;text-align:center;padding:2rem">尚未加入產品</p>';
+}
+function addProduct() {
+  const name = document.getElementById('productInput').value.trim();
+  if (!name) return;
+  wishlist.push({name, target:null});
+  localStorage.setItem('wishlist', JSON.stringify(wishlist));
+  document.getElementById('productInput').value = '';
+  render();
+}
+function updateTarget(i, v) { wishlist[i].target = v ? parseInt(v) : null; localStorage.setItem('wishlist', JSON.stringify(wishlist)); }
+function remove(i) { wishlist.splice(i,1); localStorage.setItem('wishlist', JSON.stringify(wishlist)); render(); }
+function clearAll() { if(confirm('清空？')) { wishlist=[]; localStorage.setItem('wishlist','[]'); render(); } }
+render();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
