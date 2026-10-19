@@ -1,22 +1,17 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Bell, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { UserButton } from "@/lib/auth/gates";
-import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { EmailAuthForm } from "@/components/email-auth-form";
-import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
+import { copy, type Copy, type Lang } from "@/lib/copy";
+import { quoteProducts } from "@/lib/wishlist.functions";
 import {
-  addItem,
-  checkDue,
-  checkNow,
-  listAlerts,
-  listItems,
-  markAlertsRead,
-  removeItem,
-  updateItem,
-  type PriceAlert,
+  applyQuote,
+  emptyBook,
+  loadBook,
+  recentSamePrice,
+  saveBook,
+  type Book,
   type WishlistItem,
-} from "@/lib/wishlist.functions";
+} from "@/lib/wishlist-store";
 
 export const Route = createFileRoute("/")({ component: Home });
 
@@ -24,181 +19,203 @@ function money(value: number) {
   return `HK$${value.toLocaleString("en-HK")}`;
 }
 
-function when(iso: string | null) {
-  if (!iso) return "未檢查";
+function when(iso: string, lang: Lang) {
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "未檢查";
-  return date.toLocaleString("zh-HK", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(lang === "zh" ? "zh-HK" : "en-HK", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function Home() {
-  const { user, isPending } = useCurrentUserState();
+  const [ready, setReady] = useState(false);
+  const [book, setBook] = useState<Book>(emptyBook);
+
+  useEffect(() => {
+    setBook(loadBook());
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (ready) saveBook(book);
+  }, [book, ready]);
+
+  useEffect(() => {
+    document.documentElement.lang = book.lang === "en" ? "en" : "zh-HK";
+  }, [book.lang]);
+
+  const t = copy[book.lang];
+
   return (
     <main className="min-h-screen bg-paper text-ink">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
         <header className="flex items-end justify-between gap-4 border-b border-line pb-4">
           <div>
-            <p className="text-xs font-medium tracking-[0.18em] text-muted uppercase">Wish ledger</p>
-            <h1 className="font-display text-4xl leading-none font-medium tracking-tight">格價簿</h1>
+            <p className="text-xs font-medium tracking-[0.18em] text-muted uppercase">{t.eyebrow}</p>
+            <h1 className="font-display text-4xl leading-none font-medium tracking-tight">{t.brand}</h1>
           </div>
-          <div className="min-h-11">
-            {isPending ? (
-              <div className="h-8 w-24 animate-pulse rounded-full bg-line" />
-            ) : (
-              <UserButton />
-            )}
+          <div className="flex rounded-full border border-line bg-card p-1 text-sm">
+            <LangButton active={book.lang === "zh"} onClick={() => setBook({ ...book, lang: "zh" })}>
+              繁
+            </LangButton>
+            <LangButton active={book.lang === "en"} onClick={() => setBook({ ...book, lang: "en" })}>
+              EN
+            </LangButton>
           </div>
         </header>
-        {isPending ? (
-          <div className="space-y-3">
-            <p className="max-w-xl text-sm text-muted">
-              清單存在你個帳號。發布後伺服器每日 09:00（香港時間）自動格價，低過目標就寫入提醒。
-            </p>
-            <div className="h-40 animate-pulse rounded-2xl bg-line" />
-          </div>
-        ) : user ? (
-          <Board />
-        ) : (
-          <SignedOut />
-        )}
+        {ready ? <Board book={book} setBook={setBook} t={t} /> : <div className="h-40 animate-pulse rounded-2xl bg-line" />}
       </div>
     </main>
   );
 }
 
-function SignedOut() {
+function LangButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: string;
+}) {
   return (
-    <section className="rounded-2xl border border-line bg-card p-6">
-      <h2 className="font-display text-2xl">登入先儲存清單</h2>
-      <p className="mt-2 max-w-md text-sm text-muted">
-        心願產品留喺你個帳號。發布之後，伺服器每日會自動格價，低過目標就寫入提醒。
-      </p>
-      <div className="mt-5 flex flex-col gap-2">
-        <EmailAuthForm />
-        <p className="py-1 text-center text-xs tracking-[0.16em] text-muted uppercase">或者</p>
-        {GROK_PROVIDERS.map((provider) => (
-          <button
-            key={provider.providerId}
-            type="button"
-            onClick={() => signIn(provider.providerId, { callbackURL: "/" })}
-            className="min-h-11 rounded-xl border border-line bg-paper px-4 text-sm font-medium hover:border-ink"
-          >
-            Continue with {provider.label}
-          </button>
-        ))}
-      </div>
-    </section>
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "min-h-9 rounded-full bg-ink px-3 text-paper"
+          : "min-h-9 rounded-full px-3 text-muted"
+      }
+    >
+      {children}
+    </button>
   );
 }
 
-function Board() {
-  const { user } = useCurrentUserState();
-  const [items, setItems] = useState<WishlistItem[]>([]);
-  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
+function Board({
+  book,
+  setBook,
+  t,
+}: {
+  book: Book;
+  setBook: (book: Book) => void;
+  t: Copy;
+}) {
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("通知未開");
-  const seenAlert = useRef<string | null>(null);
-
-  async function refresh() {
-    const [nextItems, nextAlerts] = await Promise.all([listItems(), listAlerts()]);
-    setItems(nextItems);
-    setAlerts(nextAlerts);
-    return nextAlerts;
-  }
-
-  useEffect(() => {
-    if (!user?.id) return;
-    let stop = false;
-    void refresh().then((next) => {
-      if (!stop) seenAlert.current = next.find((alert) => !alert.read)?.id ?? null;
-    });
-    return () => {
-      stop = true;
-    };
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    const poll = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void listAlerts().then((next) => {
-        const fresh = next.find((alert) => !alert.read);
-        if (
-          fresh &&
-          fresh.id !== seenAlert.current &&
-          typeof Notification !== "undefined" &&
-          Notification.permission === "granted"
-        ) {
-          new Notification("格價簿 · 低價", {
-            body: `${fresh.productName} ${money(fresh.price)}${fresh.shop ? ` · ${fresh.shop}` : ""}`,
-          });
-        }
-        if (fresh) seenAlert.current = fresh.id;
-        setAlerts(next);
-      });
-    }, 90_000);
-    const sweep = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void checkDue()
-        .then(() => refresh())
-        .catch(() => undefined);
-    }, 20 * 60 * 1000);
-    return () => {
-      window.clearInterval(poll);
-      window.clearInterval(sweep);
-    };
-  }, [user?.id]);
+  const [notify, setNotify] = useState<"on" | "off" | "none">("off");
 
   useEffect(() => {
     if (typeof Notification === "undefined") {
-      setNotice("呢個瀏覽器冇通知");
+      setNotify("none");
       return;
     }
-    setNotice(Notification.permission === "granted" ? "瀏覽器通知已開" : "通知未開");
+    setNotify(Notification.permission === "granted" ? "on" : "off");
   }, []);
 
-  async function onAdd(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    const targetHkd = target.trim() === "" ? null : Number(target);
-    const result = await addItem({ data: { name, targetHkd } });
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setName("");
-    setTarget("");
-    await refresh();
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (!book.items.some((item) => item.monitor)) return;
+      void runCheck(false);
+    }, 20 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [book]);
+
+  function patch(next: Partial<Book>) {
+    setBook({ ...book, ...next });
   }
 
-  async function onCheck() {
+  function onAdd(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    const trimmed = name.trim().slice(0, 120);
+    if (trimmed.length < 2) {
+      setError(t.nameShort);
+      return;
+    }
+    const targetHkd = target.trim() === "" ? null : Number(target);
+    if (target.trim() !== "" && (!Number.isInteger(targetHkd) || (targetHkd ?? 0) <= 0)) {
+      setError(t.badTarget);
+      return;
+    }
+    patch({
+      items: [
+        {
+          id: crypto.randomUUID(),
+          name: trimmed,
+          targetHkd,
+          monitor: true,
+          lastPrice: null,
+          prevPrice: null,
+          lastShop: null,
+          lastUrl: null,
+          offers: [],
+          lastCheckedAt: null,
+          lastError: null,
+        },
+        ...book.items,
+      ].slice(0, 40),
+    });
+    setName("");
+    setTarget("");
+  }
+
+  async function runCheck(manual: boolean) {
+    const watching = book.items.filter((item) => item.monitor);
+    if (watching.length === 0) {
+      if (manual) setError(t.noneWatched);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const result = await checkNow();
-      await refresh();
-      if (result.checked === 0) setError("清單入面冇開住監察嘅產品");
+      const quotes = await quoteProducts({ data: { names: watching.map((item) => item.name) } });
+      const byName = new Map(quotes.map((quote) => [quote.name, quote]));
+      const alerts = [...book.alerts];
+      const items = book.items.map((item) => {
+        if (!item.monitor) return item;
+        const quote = byName.get(item.name);
+        if (!quote) return item;
+        const applied = applyQuote(item, quote.offers, quote.error);
+        if (applied.alert && !recentSamePrice(alerts, applied.alert)) {
+          alerts.unshift(applied.alert);
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            const why = applied.alert.reason === "below_target" ? t.belowTarget : t.dropped;
+            new Notification(t.notifyTitle, {
+              body: `${applied.alert.productName} ${money(applied.alert.price)} · ${why}${applied.alert.shop ? ` · ${applied.alert.shop}` : ""}`,
+            });
+          }
+        }
+        return applied.item;
+      });
+      const problems = items
+        .filter((item) => item.lastError)
+        .map((item) => `${item.name}：${reasonText(t, item.lastError)}`);
+      if (problems.length > 0) setError(problems.join(" "));
+      patch({ items, alerts: alerts.slice(0, 30) });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "格價失敗");
+      setError(err instanceof Error ? err.message : t.checkFailed);
     } finally {
       setBusy(false);
     }
   }
 
-  const unread = alerts.filter((alert) => !alert.read);
+  const unread = book.alerts.filter((alert) => !alert.read);
+  const notice = notify === "none" ? t.notifyNone : notify === "on" ? t.notifyOn : t.notifyOff;
 
   return (
     <>
-      <p className="max-w-xl text-sm text-muted">
-        清單存在你個帳號。開住呢頁會定時再查；發布後伺服器每日 09:00（香港時間）再掃一次。低過目標價，或者比上次平至少 8%，就入提醒。
-      </p>
-
+      <p className="max-w-xl text-sm text-muted">{t.lead}</p>
       <form onSubmit={onAdd} className="grid gap-3 rounded-2xl border border-line bg-card p-4 sm:grid-cols-[1fr_9rem_auto]">
         <label className="block text-sm">
-          <span className="mb-1 block text-muted">產品</span>
+          <span className="mb-1 block text-muted">{t.product}</span>
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -207,7 +224,7 @@ function Board() {
           />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block text-muted">目標價</span>
+          <span className="mb-1 block text-muted">{t.target}</span>
           <input
             inputMode="numeric"
             value={target}
@@ -221,7 +238,7 @@ function Board() {
           className="mt-auto inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-signal px-4 text-sm font-medium text-card"
         >
           <Plus className="size-4" />
-          加入
+          {t.add}
         </button>
       </form>
 
@@ -229,18 +246,18 @@ function Board() {
         <button
           type="button"
           disabled={busy}
-          onClick={() => void onCheck()}
+          onClick={() => void runCheck(true)}
           className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-ink bg-ink px-4 text-sm font-medium text-paper disabled:opacity-60"
         >
           <RefreshCw className={busy ? "size-4 animate-spin" : "size-4"} />
-          {busy ? "格緊…" : "而家格價"}
+          {busy ? t.checking : t.check}
         </button>
         <button
           type="button"
           onClick={() => {
             if (typeof Notification === "undefined") return;
             void Notification.requestPermission().then((permission) => {
-              setNotice(permission === "granted" ? "瀏覽器通知已開" : "通知未開");
+              setNotify(permission === "granted" ? "on" : "off");
             });
           }}
           className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-line bg-card px-4 text-sm"
@@ -248,13 +265,14 @@ function Board() {
           <Bell className="size-4" />
           {notice}
         </button>
+        <span className="text-sm text-muted">{t.savedHere}</span>
         {unread.length > 0 && (
           <button
             type="button"
-            onClick={() => void markAlertsRead().then(refresh)}
+            onClick={() => patch({ alerts: book.alerts.map((alert) => ({ ...alert, read: true })) })}
             className="min-h-11 rounded-xl px-3 text-sm text-signal"
           >
-            標示 {unread.length} 個已讀
+            {t.markRead(unread.length)}
           </button>
         )}
       </div>
@@ -262,17 +280,14 @@ function Board() {
 
       {unread.length > 0 && (
         <section className="rounded-2xl border border-signal/30 bg-card p-4">
-          <h2 className="font-display text-xl">低價提醒</h2>
+          <h2 className="font-display text-xl">{t.alerts}</h2>
           <ul className="mt-3 space-y-2">
             {unread.map((alert) => (
               <li key={alert.id} className="text-sm">
                 <span className="font-medium">{alert.productName}</span>
                 <span className="text-deal"> {money(alert.price)}</span>
                 {alert.shop ? <span className="text-muted"> · {alert.shop}</span> : null}
-                <span className="text-muted">
-                  {" "}
-                  · {alert.reason === "below_target" ? "低過目標" : "明顯回落"}
-                </span>
+                <span className="text-muted"> · {alert.reason === "below_target" ? t.belowTarget : t.dropped}</span>
               </li>
             ))}
           </ul>
@@ -280,23 +295,71 @@ function Board() {
       )}
 
       <section className="space-y-3">
-        {items.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-line px-4 py-10 text-center text-sm text-muted">
-            未有產品。加一件，再撳「而家格價」。
-          </p>
+        {book.items.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-line px-4 py-10 text-center text-sm text-muted">{t.empty}</p>
         ) : (
-          items.map((item) => <ItemCard key={item.id} item={item} onChange={refresh} />)
+          book.items.map((item) => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              lang={book.lang}
+              t={t}
+              onTarget={(targetHkd) =>
+                patch({
+                  items: book.items.map((row) => (row.id === item.id ? { ...row, targetHkd } : row)),
+                })
+              }
+              onMonitor={() =>
+                patch({
+                  items: book.items.map((row) => (row.id === item.id ? { ...row, monitor: !row.monitor } : row)),
+                })
+              }
+              onRemove={() =>
+                patch({
+                  items: book.items.filter((row) => row.id !== item.id),
+                  alerts: book.alerts.filter((alert) => alert.itemId !== item.id),
+                })
+              }
+            />
+          ))
         )}
       </section>
     </>
   );
 }
 
-function ItemCard({ item, onChange }: { item: WishlistItem; onChange: () => Promise<unknown> }) {
+function reasonText(t: Copy, error: WishlistItem["lastError"]) {
+  if (error === "blocked") return t.blocked;
+  if (error === "timeout") return t.timeout;
+  if (error === "empty") return t.emptyQuote;
+  return t.failed;
+}
+
+function ItemCard({
+  item,
+  lang,
+  t,
+  onTarget,
+  onMonitor,
+  onRemove,
+}: {
+  item: WishlistItem;
+  lang: Lang;
+  t: Copy;
+  onTarget: (targetHkd: number | null) => void;
+  onMonitor: () => void;
+  onRemove: () => void;
+}) {
   const [target, setTarget] = useState(item.targetHkd ? String(item.targetHkd) : "");
-  const delta =
-    item.lastPrice != null && item.prevPrice != null ? item.lastPrice - item.prevPrice : null;
+  const [note, setNote] = useState<string | null>(null);
+  const delta = item.lastPrice != null && item.prevPrice != null ? item.lastPrice - item.prevPrice : null;
   const hit = item.lastPrice != null && item.targetHkd != null && item.lastPrice <= item.targetHkd;
+  const parsed = target.trim() === "" ? null : Number(target);
+  const dirty = parsed !== item.targetHkd;
+
+  useEffect(() => {
+    setTarget(item.targetHkd ? String(item.targetHkd) : "");
+  }, [item.targetHkd]);
 
   return (
     <article className="rounded-2xl border border-line bg-card p-4">
@@ -304,8 +367,8 @@ function ItemCard({ item, onChange }: { item: WishlistItem; onChange: () => Prom
         <div>
           <h3 className="font-display text-2xl leading-tight">{item.name}</h3>
           <p className="mt-1 text-sm text-muted">
-            {item.lastCheckedAt ? `上次 ${when(item.lastCheckedAt)}` : "未檢查"}
-            {item.monitor ? " · 監察中" : " · 已暫停"}
+            {item.lastCheckedAt ? `${t.last} ${when(item.lastCheckedAt, lang)}` : t.notChecked}
+            {item.monitor ? ` · ${t.watching}` : ` · ${t.paused}`}
           </p>
         </div>
         <div className="text-right">
@@ -314,7 +377,7 @@ function ItemCard({ item, onChange }: { item: WishlistItem; onChange: () => Prom
           </p>
           {delta != null && delta !== 0 && (
             <p className={delta < 0 ? "text-sm text-deal" : "text-sm text-signal"}>
-              {delta < 0 ? `跌 ${money(Math.abs(delta))}` : `升 ${money(delta)}`}
+              {delta < 0 ? t.fell(money(Math.abs(delta))) : t.rose(money(delta))}
             </p>
           )}
         </div>
@@ -328,10 +391,10 @@ function ItemCard({ item, onChange }: { item: WishlistItem; onChange: () => Prom
           ) : (
             item.lastShop
           )}
-          {hit && <span className="ml-2 text-deal">低過目標</span>}
+          {hit && <span className="ml-2 text-deal">{t.belowTarget}</span>}
         </p>
       )}
-      {item.lastError && <p className="mt-2 text-sm text-warn">{item.lastError}</p>}
+      {item.lastError && <p className="mt-2 text-sm text-warn">{reasonText(t, item.lastError)}</p>}
       {item.offers.length > 1 && (
         <ul className="mt-3 space-y-1 text-sm text-muted">
           {item.offers.slice(0, 4).map((offer) => (
@@ -346,44 +409,45 @@ function ItemCard({ item, onChange }: { item: WishlistItem; onChange: () => Prom
       )}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="text-sm text-muted">
-          低過
+          {t.under}
           <input
             inputMode="numeric"
             value={target}
-            onChange={(event) => setTarget(event.target.value.replace(/[^\d]/g, ""))}
-            onBlur={() => {
-              const targetHkd = target === "" ? null : Number(target);
-              void updateItem({
-                data: { id: item.id, targetHkd, monitor: item.monitor },
-              }).then(onChange);
+            onChange={(event) => {
+              setNote(null);
+              setTarget(event.target.value.replace(/[^\d]/g, ""));
             }}
             className="mx-2 min-h-11 w-28 rounded-xl border border-line bg-paper px-3 text-ink"
           />
         </label>
         <button
           type="button"
-          onClick={() =>
-            void updateItem({
-              data: {
-                id: item.id,
-                targetHkd: target === "" ? null : Number(target),
-                monitor: !item.monitor,
-              },
-            }).then(onChange)
-          }
-          className="min-h-11 rounded-xl border border-line px-3 text-sm"
+          disabled={!dirty}
+          onClick={() => {
+            if (target.trim() !== "" && (!Number.isInteger(parsed) || (parsed ?? 0) <= 0)) {
+              setNote(t.badTarget);
+              return;
+            }
+            setNote(null);
+            onTarget(parsed);
+          }}
+          className="min-h-11 rounded-xl bg-ink px-3 text-sm text-paper disabled:opacity-40"
         >
-          {item.monitor ? "暫停監察" : "恢復監察"}
+          {t.change}
+        </button>
+        <button type="button" onClick={onMonitor} className="min-h-11 rounded-xl border border-line px-3 text-sm">
+          {item.monitor ? t.pause : t.resume}
         </button>
         <button
           type="button"
-          onClick={() => void removeItem({ data: item.id }).then(onChange)}
+          onClick={onRemove}
           className="inline-flex min-h-11 items-center gap-1 rounded-xl px-3 text-sm text-muted"
         >
           <Trash2 className="size-4" />
-          刪除
+          {t.remove}
         </button>
       </div>
+      {note && <p className="mt-2 text-sm text-signal">{note}</p>}
     </article>
   );
 }

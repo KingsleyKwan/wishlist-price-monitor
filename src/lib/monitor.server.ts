@@ -9,6 +9,20 @@ type ItemRow = {
   last_price: number | null;
 };
 
+function reasonFor(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Lookup failed";
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return `${message}。原因：公開搜尋超過 14 秒未回應。`;
+  }
+  if (message.startsWith("Search failed")) {
+    return `${message}。原因：公開搜尋拒絕咗今次查詢。`;
+  }
+  if (message === "Search was blocked") {
+    return `${message}。原因：返回頁面太短，通常係防機械人攔截。`;
+  }
+  return `${message}。原因：搜尋中途失敗。`;
+}
+
 function asInt(value: unknown): number | null {
   if (value == null) return null;
   const n = typeof value === "number" ? value : Number(value);
@@ -25,17 +39,17 @@ export async function checkItem(row: ItemRow): Promise<{
   try {
     offers = await lookupOffers(row.name);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Lookup failed";
+    const message = reasonFor(error).slice(0, 240);
     await sql`
       update wishlist_items
-      set last_error = ${message.slice(0, 180)}, last_checked_at = now()
+      set last_error = ${message}, last_checked_at = now()
       where id = ${row.id} and user_id = ${row.user_id}
     `;
     return { price: null, alerted: false, error: message };
   }
 
   if (offers.length === 0) {
-    const message = "搵唔到公開報價";
+    const message = "搵唔到公開報價。原因：結果入面冇同時提到呢件產品同 HK$ 價錢。";
     await sql`
       update wishlist_items
       set last_error = ${message}, last_checked_at = now()
@@ -121,13 +135,15 @@ export async function checkUserItems(userId: string, force: boolean) {
   );
   let checked = 0;
   let alerted = 0;
+  const errors: string[] = [];
   for (const row of rows) {
     const result = await checkItem(row);
     checked += 1;
     if (result.alerted) alerted += 1;
+    if (result.error) errors.push(`${row.name}：${result.error}`);
     if (rows.length > 1) await new Promise((resolve) => setTimeout(resolve, 350));
   }
-  return { checked, alerted };
+  return { checked, alerted, errors };
 }
 
 export async function sweepDueItems() {

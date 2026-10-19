@@ -104,8 +104,64 @@ export function parseSearchHtml(html: string, query = ""): Offer[] {
   return offers.slice(0, 6);
 }
 
-async function searchOnce(searchQuery: string, product: string): Promise<Offer[]> {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+function productUrl(href: string): { url: string; shopId: string } | null {
+  const raw = href.replace(new RegExp("&" + "amp;", "g"), "&");
+  const shopId = raw.match(/[?&]i=([^&]+)/)?.[1] ?? "";
+  const purl = raw.match(/[?&]purl=([^&]+)/);
+  if (!purl) return null;
+  try {
+    const url = new URL(decodeURIComponent(purl[1]));
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return { url: url.toString(), shopId };
+  } catch {
+    return null;
+  }
+}
+
+function hkdAmount(text: string): number | null {
+  const match = text.replace(/,/g, "").match(/\$\s*([0-9]+(?:\.[0-9]+)?)/);
+  if (!match) return null;
+  const value = Math.round(Number(match[1]));
+  if (value < 20 || value > 200_000) return null;
+  return value;
+}
+
+export function parseBigGoHtml(html: string, query = ""): Offer[] {
+  const cards = [
+    ...html.matchAll(
+      /title="([^"]+)" href="([^"]*purl=[^"]+)"[\s\S]*?data-price="true">\s*([^<]+?)\s*<[\s\S]*?<span>([^<]+)<\/span>/gi,
+    ),
+  ];
+  const offers: Array<Offer & { retail: boolean }> = [];
+  const seen = new Set<string>();
+
+  for (const card of cards) {
+    const title = strip(card[1]);
+    const located = productUrl(card[2]);
+    const price = hkdAmount(card[3]);
+    const shop = strip(card[4]);
+    if (!located || price == null || !shop) continue;
+    if (!located.shopId.startsWith("hk_")) continue;
+    if (query && !relevant(query, `${title} ${shop}`)) continue;
+    const key = `${located.url}|${price}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    offers.push({ shop, price, url: located.url, title, retail: located.shopId.startsWith("hk_ec_") });
+  }
+
+  const retail = offers.filter((offer) => offer.retail);
+  const pool = retail.length > 0 ? retail : offers;
+  if (pool.length === 0) return [];
+  const high = Math.max(...pool.map((offer) => offer.price));
+  return pool
+    .filter((offer) => offer.price >= high * 0.45)
+    .sort((a, b) => a.price - b.price)
+    .map(({ shop, price, url, title }) => ({ shop, price, url, title }))
+    .slice(0, 6);
+}
+
+async function searchBigGo(product: string): Promise<Offer[]> {
+  const url = `https://biggo.hk/s/${encodeURIComponent(product)}`;
   const response = await fetch(url, {
     headers: {
       "User-Agent": UA,
@@ -116,13 +172,66 @@ async function searchOnce(searchQuery: string, product: string): Promise<Offer[]
   });
   if (!response.ok) throw new Error(`Search failed (${response.status})`);
   const html = await response.text();
-  if (html.length < 1500) throw new Error("Search was blocked");
-  return parseSearchHtml(html, product);
+  if (html.length < 1500 || /Just a moment|Access Denied/i.test(html)) {
+    throw new Error("Search was blocked");
+  }
+  return parseBigGoHtml(html, product);
+}
+
+async function searchLite(product: string): Promise<Offer[]> {
+  const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(`${product} 香港 HK$ 價錢`)}`;
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": UA,
+      "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
+      Accept: "text/html",
+    },
+    signal: AbortSignal.timeout(14_000),
+  });
+  if (!response.ok) throw new Error(`Search failed (${response.status})`);
+  const html = await response.text();
+  if (html.length < 1500 || /bots use DuckDuckGo|anomaly-modal/i.test(html)) {
+    throw new Error("Search was blocked");
+  }
+  const offers = parseSearchHtml(html, product);
+  if (offers.length > 0) return offers;
+  return parseLiteHtml(html, product);
+}
+
+export function parseLiteHtml(html: string, query = ""): Offer[] {
+  const titles = [...html.matchAll(/<a[^>]*class='result-link'[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+  const snippets = [...html.matchAll(/class='result-snippet'>([\s\S]*?)<\/td>/gi)];
+  const offers: Offer[] = [];
+  const seen = new Set<string>();
+  titles.forEach((titleMatch, index) => {
+    const url = decodeHref(titleMatch[1]);
+    if (!url) return;
+    const title = strip(titleMatch[2]);
+    const snippet = strip(snippets[index]?.[1] ?? "");
+    const blob = `${title} ${snippet}`;
+    if (query && !relevant(query, blob)) return;
+    const price = pickPrice(pricesIn(blob));
+    if (price == null) return;
+    const key = `${url}|${price}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    offers.push({ shop: shopFrom(title, url), price, url, title });
+  });
+  offers.sort((a, b) => a.price - b.price);
+  return offers.slice(0, 6);
 }
 
 export async function lookupOffers(product: string): Promise<Offer[]> {
   const name = product.trim().slice(0, 120);
-  const first = await searchOnce(`${name} 香港 HK$ 價錢`, name);
-  if (first.length > 0) return first;
-  return searchOnce(`${name} Price.com.hk OR 豐澤 OR 友和 HK$`, name);
+  const failures: string[] = [];
+  for (const search of [searchBigGo, searchLite]) {
+    try {
+      const offers = await search(name);
+      if (offers.length > 0) return offers;
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : "Search failed");
+    }
+  }
+  if (failures.length === 2) throw new Error(failures[0]);
+  return [];
 }
