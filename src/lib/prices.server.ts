@@ -3,6 +3,7 @@ export type Offer = {
   price: number;
   url: string;
   title: string;
+  chain: boolean;
 };
 
 const UA =
@@ -54,16 +55,24 @@ function pickPrice(amounts: number[]): number | null {
   return Math.min(...(plausible.length > 0 ? plausible : amounts));
 }
 
-function relevant(query: string, text: string): boolean {
-  const tokens = query
+const SIZE = /^\d+(?:\.\d+)?(?:ml|g|kg|gb|tb|mm|cm|oz|l|inch|in)$/i;
+const STOP = new Set(["the", "a", "an", "of", "for", "and", "or", "的", "及"]);
+
+function nameTokens(query: string): string[] {
+  return query
     .split(/\s+/)
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2);
+    .filter((token) => token.length >= 2 && !SIZE.test(token) && !STOP.has(token.toLowerCase()));
+}
+
+function relevant(query: string, text: string): boolean {
+  const tokens = nameTokens(query);
+  if (tokens.length === 0) return true;
   const hay = text.toLowerCase();
-  const model = tokens.find((token) => /\d/.test(token));
-  if (model) return hay.includes(model.toLowerCase());
-  const longest = [...tokens].sort((a, b) => b.length - a.length)[0];
-  return longest ? hay.includes(longest.toLowerCase()) : true;
+  const hits = tokens.filter((token) => hay.includes(token.toLowerCase()));
+  if (!hay.includes(tokens[0].toLowerCase())) return false;
+  const need = Math.min(tokens.length, Math.max(2, Math.ceil(tokens.length * 0.5)));
+  return hits.length >= need;
 }
 
 function shopFrom(title: string, url: string): string {
@@ -97,7 +106,7 @@ export function parseSearchHtml(html: string, query = ""): Offer[] {
     const key = `${url}|${price}`;
     if (seen.has(key)) return;
     seen.add(key);
-    offers.push({ shop: shopFrom(title, url), price, url, title });
+    offers.push({ shop: shopFrom(title, url), price, url, title, chain: false });
   });
 
   offers.sort((a, b) => a.price - b.price);
@@ -132,7 +141,7 @@ export function parseBigGoHtml(html: string, query = ""): Offer[] {
       /title="([^"]+)" href="([^"]*purl=[^"]+)"[\s\S]*?data-price="true">\s*([^<]+?)\s*<[\s\S]*?<span>([^<]+)<\/span>/gi,
     ),
   ];
-  const offers: Array<Offer & { retail: boolean }> = [];
+  const offers: Offer[] = [];
   const seen = new Set<string>();
 
   for (const card of cards) {
@@ -146,18 +155,26 @@ export function parseBigGoHtml(html: string, query = ""): Offer[] {
     const key = `${located.url}|${price}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    offers.push({ shop, price, url: located.url, title, retail: located.shopId.startsWith("hk_ec_") });
+    offers.push({
+      shop,
+      price,
+      url: located.url,
+      title,
+      chain: located.shopId.startsWith("hk_ec_"),
+    });
   }
 
-  const retail = offers.filter((offer) => offer.retail);
-  const pool = retail.length > 0 ? retail : offers;
-  if (pool.length === 0) return [];
-  const high = Math.max(...pool.map((offer) => offer.price));
-  return pool
-    .filter((offer) => offer.price >= high * 0.45)
+  if (offers.length === 0) return [];
+  const chains = offers.filter((offer) => offer.chain).sort((a, b) => a.price - b.price);
+  const cheapestChain = chains[0];
+  const floor = cheapestChain
+    ? cheapestChain.price * 0.45
+    : Math.max(...offers.map((offer) => offer.price)) * 0.45;
+  const others = offers
+    .filter((offer) => !offer.chain && offer.price >= floor)
     .sort((a, b) => a.price - b.price)
-    .map(({ shop, price, url, title }) => ({ shop, price, url, title }))
     .slice(0, 6);
+  return [...chains.slice(0, 2), ...others].slice(0, 8);
 }
 
 async function searchBigGo(product: string): Promise<Offer[]> {
@@ -215,7 +232,7 @@ export function parseLiteHtml(html: string, query = ""): Offer[] {
     const key = `${url}|${price}`;
     if (seen.has(key)) return;
     seen.add(key);
-    offers.push({ shop: shopFrom(title, url), price, url, title });
+    offers.push({ shop: shopFrom(title, url), price, url, title, chain: false });
   });
   offers.sort((a, b) => a.price - b.price);
   return offers.slice(0, 6);

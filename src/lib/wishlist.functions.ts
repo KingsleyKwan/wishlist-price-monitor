@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-type OfferView = { shop: string; price: number; url: string; title: string };
+type OfferView = { shop: string; price: number; url: string; title: string; chain?: boolean };
 
 export const quoteProducts = createServerFn({ method: "POST" })
   .validator((input: { names: string[] }) => {

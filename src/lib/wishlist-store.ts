@@ -1,6 +1,35 @@
 import type { Lang } from "@/lib/copy";
 
-export type OfferView = { shop: string; price: number; url: string; title: string };
+export type OfferView = {
+  shop: string;
+  price: number;
+  url: string;
+  title: string;
+  chain?: boolean;
+};
+
+export function chainOffers(offers: OfferView[]) {
+  return offers.filter((offer) => offer.chain).sort((a, b) => a.price - b.price);
+}
+
+export function headlineOffer(offers: OfferView[], target: number | null): OfferView | null {
+  const chains = chainOffers(offers);
+  if (chains[0]) return chains[0];
+  const ranked = [...offers].sort((a, b) => a.price - b.price);
+  if (target == null) return ranked[0] ?? null;
+  return ranked.find((offer) => offer.price <= target) ?? ranked[0] ?? null;
+}
+
+export function underTargetOffers(offers: OfferView[], target: number | null): OfferView[] {
+  if (target == null) return [];
+  const chains = chainOffers(offers);
+  if (chains.some((offer) => offer.price <= target)) return [];
+  const headline = headlineOffer(offers, target);
+  return offers
+    .filter((offer) => offer.price <= target && offer.url !== headline?.url)
+    .sort((a, b) => a.price - b.price)
+    .slice(0, 5);
+}
 
 export type WishlistItem = {
   id: string;
@@ -75,7 +104,14 @@ export function applyQuote(
       alert: null,
     };
   }
-  const best = [...offers].sort((a, b) => a.price - b.price)[0];
+  const best = headlineOffer(offers, item.targetHkd);
+  if (!best) {
+    return { item: { ...item, lastError: "empty", lastCheckedAt: checkedAt }, alert: null };
+  }
+  const under = underTargetOffers(offers, item.targetHkd);
+  const deal = [best, ...under]
+    .filter((offer) => item.targetHkd != null && offer.price <= item.targetHkd)
+    .sort((a, b) => a.price - b.price)[0];
   const previous = item.lastPrice;
   const next: WishlistItem = {
     ...item,
@@ -83,27 +119,28 @@ export function applyQuote(
     lastPrice: best.price,
     lastShop: best.shop,
     lastUrl: best.url,
-    offers: offers.slice(0, 6),
+    offers,
     lastError: null,
     lastCheckedAt: checkedAt,
   };
-  const below = next.targetHkd != null && best.price <= next.targetHkd;
   const dropped =
+    !deal &&
     previous != null &&
     best.price < previous &&
     previous - best.price >= 50 &&
     best.price <= previous * 0.92;
-  if (!below && !dropped) return { item: next, alert: null };
+  if (!deal && !dropped) return { item: next, alert: null };
+  const picked = deal ?? best;
   return {
     item: next,
     alert: {
       id: crypto.randomUUID(),
       itemId: item.id,
       productName: item.name,
-      price: best.price,
-      shop: best.shop,
-      url: best.url,
-      reason: below ? "below_target" : "dropped",
+      price: picked.price,
+      shop: picked.shop,
+      url: picked.url,
+      reason: deal ? "below_target" : "dropped",
       read: false,
       createdAt: checkedAt,
     },

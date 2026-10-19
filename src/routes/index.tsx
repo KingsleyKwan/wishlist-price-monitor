@@ -9,6 +9,7 @@ import {
   loadBook,
   recentSamePrice,
   saveBook,
+  underTargetOffers,
   type Book,
   type WishlistItem,
 } from "@/lib/wishlist-store";
@@ -392,20 +393,28 @@ function ItemCard({
             item.lastShop
           )}
           {hit && <span className="ml-2 text-deal">{t.belowTarget}</span>}
+          {!hit && item.targetHkd != null && item.lastPrice != null && item.lastPrice > item.targetHkd && (
+            <span className="ml-2 text-signal">
+              {t.overTarget} {money(item.lastPrice - item.targetHkd)}
+            </span>
+          )}
         </p>
       )}
       {item.lastError && <p className="mt-2 text-sm text-warn">{reasonText(t, item.lastError)}</p>}
-      {item.offers.length > 1 && (
-        <ul className="mt-3 space-y-1 text-sm text-muted">
-          {item.offers.slice(0, 4).map((offer) => (
-            <li key={`${offer.url}-${offer.price}`} className="flex justify-between gap-3">
-              <a href={offer.url} target="_blank" rel="noreferrer" className="truncate underline-offset-4 hover:underline">
-                {offer.shop}
-              </a>
-              <span className="shrink-0 text-ink">{money(offer.price)}</span>
-            </li>
-          ))}
-        </ul>
+      {underTargetOffers(item.offers, item.targetHkd).length > 0 && (
+        <div className="mt-3">
+          <p className="text-sm text-deal">{t.underList}</p>
+          <ul className="mt-1 space-y-1 text-sm text-muted">
+            {underTargetOffers(item.offers, item.targetHkd).map((offer) => (
+              <li key={`${offer.url}-${offer.price}`} className="flex justify-between gap-3">
+                <a href={offer.url} target="_blank" rel="noreferrer" className="truncate underline-offset-4 hover:underline">
+                  {offer.shop}
+                </a>
+                <span className="shrink-0 text-ink">{money(offer.price)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="text-sm text-muted">
